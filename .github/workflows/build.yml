@@ -45,15 +45,3 @@ jobs:
             build/app/outputs/flutter-apk/app-debug.apk
             build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
-
-      - name: Upload to Release
-        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            build/app/outputs/flutter-apk/app-debug.apk
-            build/app/outputs/flutter-apk/app-release.apk
-          tag_name: v1.0.0
-          draft: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
