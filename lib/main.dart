@@ -105,9 +105,6 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
     }
   }
 
-  @Color(intValue: 0xFF4CAF50)
-  Color get _goodSignal => Colors.green;
-  
   _getSignalColor(double snr) {
     if (snr >= 40) return Colors.green;
     if (snr >= 25) return Colors.orange;
