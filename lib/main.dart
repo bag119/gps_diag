@@ -76,6 +76,13 @@ String getGnssName(int prn, GnssType type) {
   }
 }
 
+class GpsDiagnosticPage extends StatefulWidget {
+  const GpsDiagnosticPage({super.key});
+
+  @override
+  State<GpsDiagnosticPage> createState() => _GpsDiagnosticPageState();
+}
+
 class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
   static const platform = MethodChannel('com.gpsdiag/gps_status');
 
