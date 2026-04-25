@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:async';
 
@@ -43,7 +42,7 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
   List<Map<String, dynamic>> _satellites = [];
   int _usedSatellites = 0;
   Timer? _refreshTimer;
-  String _statusMessage = "正在检查权限...";
+  String _statusMessage = "正在检查...";
 
   @override
   void initState() {
@@ -61,51 +60,76 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
     setState(() => _statusMessage = "正在请求权限...");
 
     final status = await Permission.location.request();
-    setState(() {
-      _hasPermission = status.isGranted;
-      if (_hasPermission) {
+    
+    if (status.isGranted) {
+      setState(() {
+        _hasPermission = true;
         _statusMessage = "权限已获取";
-        _startMonitoring();
-      } else {
-        _statusMessage = "需要定位权限才能使用";
-      }
-    });
+      });
+      _startMonitoring();
+    } else if (status.isPermanentlyDenied) {
+      setState(() {
+        _hasPermission = false;
+        _statusMessage = "权限被拒绝，请在设置中开启";
+      });
+    } else {
+      setState(() {
+        _hasPermission = false;
+        _statusMessage = "需要定位权限";
+      });
+    }
   }
 
   Future<void> _startMonitoring() async {
+    // 请求位置更新
+    try {
+      await platform.invokeMethod('requestLocationUpdate');
+    } catch (e) {
+      debugPrint('请求位置更新失败: $e');
+    }
+    
     await _refreshGpsData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    
+    // 每秒刷新一次
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _refreshGpsData();
     });
   }
 
   Future<void> _refreshGpsData() async {
     try {
+      // 直接检查GPS是否启用
       final bool isEnabled = await platform.invokeMethod('isGpsEnabled');
-      final location = await platform.invokeMethod('getLastLocation');
+      
+      // 获取GPS数据
       final gpsData = await platform.invokeMethod('getGpsStatus');
-
+      
       if (!mounted) return;
 
       setState(() {
         _isGpsEnabled = isEnabled;
-        _locationData = location;
+        
         if (gpsData != null) {
+          // 获取位置信息
+          final location = gpsData['location'] as Map<dynamic, dynamic>?;
+          if (location != null && location.isNotEmpty) {
+            _locationData = Map<String, dynamic>.from(location);
+          }
+          
+          // 获取卫星列表
           final satellites = gpsData['satellites'] as List<dynamic>?;
-          _satellites = satellites?.map((s) => Map<String, dynamic>.from(s as Map)).toList() ?? [];
-          _usedSatellites = _satellites.where((s) => s['used'] == true).length;
+          if (satellites != null) {
+            _satellites = satellites.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+            _usedSatellites = _satellites.where((s) => s['used'] == true).length;
+          }
         }
       });
     } on PlatformException catch (e) {
-      if (mounted) {
-        setState(() {
-          _statusMessage = "错误: ${e.message}";
-        });
-      }
+      debugPrint('获取GPS数据失败: ${e.message}');
     }
   }
 
-  _getSignalColor(double snr) {
+  Color _getSignalColor(double snr) {
     if (snr >= 40) return Colors.green;
     if (snr >= 25) return Colors.orange;
     return Colors.red;
@@ -128,21 +152,19 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
           ? _buildPermissionRequest()
           : RefreshIndicator(
               onRefresh: _refreshGpsData,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
+              child: ListView(
                 padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildStatusCard(),
-                    const SizedBox(height: 16),
-                    _buildLocationCard(),
-                    const SizedBox(height: 16),
-                    _buildSatelliteStatsCard(),
-                    const SizedBox(height: 16),
-                    _buildSatelliteList(),
-                  ],
-                ),
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  _buildStatusCard(),
+                  const SizedBox(height: 16),
+                  _buildLocationCard(),
+                  const SizedBox(height: 16),
+                  _buildSatelliteStatsCard(),
+                  const SizedBox(height: 16),
+                  _buildSatelliteList(),
+                  const SizedBox(height: 80),
+                ],
               ),
             ),
     );
@@ -194,16 +216,20 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
                   size: 28,
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  'GPS状态: ${_isGpsEnabled ? "已开启" : "已关闭"}',
-                  style: Theme.of(context).textTheme.titleMedium,
+                Expanded(
+                  child: Text(
+                    'GPS状态: ${_isGpsEnabled ? "已开启 ✓" : "已关闭 ✗"}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: _isGpsEnabled ? Colors.green : Colors.red,
+                    ),
+                  ),
                 ),
               ],
             ),
             if (!_isGpsEnabled) ...[
               const SizedBox(height: 16),
               const Text(
-                '请在设置中开启GPS定位服务',
+                '⚠️ 请在设置中开启GPS定位服务',
                 style: TextStyle(color: Colors.orange),
               ),
             ],
@@ -214,11 +240,20 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
   }
 
   Widget _buildLocationCard() {
-    if (_locationData == null) {
-      return const Card(
+    if (_locationData == null || _locationData!.isEmpty) {
+      return Card(
         child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('正在获取位置信息...'),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              const Icon(Icons.location_searching, size: 48, color: Colors.grey),
+              const SizedBox(height: 8),
+              Text(
+                _isGpsEnabled ? "正在获取位置..." : "GPS未开启",
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -244,7 +279,7 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
             _buildInfoRow('经度', '${_locationData!['longitude']?.toStringAsFixed(6) ?? "N/A"}°'),
             _buildInfoRow('海拔', '${_locationData!['altitude']?.toStringAsFixed(1) ?? "N/A"} m'),
             _buildInfoRow('精度', '${_locationData!['accuracy']?.toStringAsFixed(1) ?? "N/A"} m'),
-            _buildInfoRow('速度', '${(_locationData!['speed'] ?? 0) * 3.6.toStringAsFixed(1)} km/h'),
+            _buildInfoRow('速度', '${((_locationData!['speed'] ?? 0) * 3.6).toStringAsFixed(1)} km/h'),
           ],
         ),
       ),
@@ -302,7 +337,11 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
           padding: const EdgeInsets.all(32),
           child: Column(
             children: [
-              const Icon(Icons.satellite, size: 48, color: Colors.grey),
+              Icon(
+                Icons.satellite,
+                size: 48,
+                color: _isGpsEnabled ? Colors.cyan : Colors.grey,
+              ),
               const SizedBox(height: 16),
               Text(
                 _isGpsEnabled ? "正在搜索卫星..." : "请开启GPS",
@@ -313,6 +352,10 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
         ),
       );
     }
+
+    // 按信噪比排序
+    final sortedSatellites = List<Map<String, dynamic>>.from(_satellites)
+      ..sort((a, b) => ((b['snr'] ?? 0) as num).compareTo((a['snr'] ?? 0) as num));
 
     return Card(
       child: Padding(
@@ -331,7 +374,7 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
               ],
             ),
             const Divider(),
-            ..._satellites.map((sat) => _buildSatelliteItem(sat)),
+            ...sortedSatellites.map((sat) => _buildSatelliteItem(sat)),
           ],
         ),
       ),
@@ -346,10 +389,14 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: used ? Colors.green.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.1),
+        color: used 
+            ? Colors.green.withOpacity(0.1) 
+            : Colors.grey.withOpacity(0.1),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: used ? Colors.green.withValues(alpha: 0.5) : Colors.grey.withValues(alpha: 0.3),
+          color: used 
+              ? Colors.green.withOpacity(0.5) 
+              : Colors.grey.withOpacity(0.3),
         ),
       ),
       child: Row(
@@ -359,7 +406,7 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
             width: 50,
             padding: const EdgeInsets.symmetric(vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.blue.withValues(alpha: 0.3),
+              color: Colors.blue.withOpacity(0.3),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -387,12 +434,11 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                // 信号强度条
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
                     value: (snr / 55).clamp(0.0, 1.0),
-                    backgroundColor: Colors.grey.withValues(alpha: 0.3),
+                    backgroundColor: Colors.grey.withOpacity(0.3),
                     valueColor: AlwaysStoppedAnimation(_getSignalColor(snr)),
                     minHeight: 8,
                   ),
@@ -416,7 +462,6 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
             ],
           ),
           const SizedBox(width: 8),
-          // 状态图标
           Icon(
             used ? Icons.check_circle : Icons.circle_outlined,
             color: used ? Colors.green : Colors.grey,
