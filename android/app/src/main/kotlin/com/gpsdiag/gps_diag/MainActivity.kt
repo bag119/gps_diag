@@ -72,7 +72,7 @@ class MainActivity : FlutterActivity() {
                             satellites.forEach { satellite ->
                                 satelliteData.add(mapOf(
                                     "prn" to satellite.prn,
-                                    "snr" to satellite.signalStrength,
+                                    "snr" to satellite.snr,
                                     "elevation" to satellite.elevation,
                                     "azimuth" to satellite.azimuth,
                                     "used" to satellite.usedInFix()
