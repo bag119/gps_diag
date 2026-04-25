@@ -76,7 +76,7 @@ class MainActivity : FlutterActivity() {
                                 "snr" to (sat.snr ?: 0.0),
                                 "elevation" to (sat.elevation ?: 0.0),
                                 "azimuth" to (sat.azimuth ?: 0.0),
-                                "used" to sat.usedInFix
+                                "used" to sat.usedInFix()
                             ))
                         }
                     }
