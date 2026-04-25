@@ -27,11 +27,53 @@ class GpsDiagApp extends StatelessWidget {
   }
 }
 
-class GpsDiagnosticPage extends StatefulWidget {
-  const GpsDiagnosticPage({super.key});
+// 卫星系统分类
+enum GnssType { GPS, GLONASS, Galileo, BeiDou, SBAS, Other }
 
-  @override
-  State<GpsDiagnosticPage> createState() => _GpsDiagnosticPageState();
+class SatelliteInfo {
+  final int prn;
+  final double snr;
+  final double elevation;
+  final double azimuth;
+  final bool used;
+  final GnssType type;
+  final String name;
+
+  SatelliteInfo({
+    required this.prn,
+    required this.snr,
+    required this.elevation,
+    required this.azimuth,
+    required this.used,
+    required this.type,
+    required this.name,
+  });
+}
+
+GnssType getGnssType(int prn) {
+  if (prn >= 1 && prn <= 32) return GnssType.GPS;
+  if (prn >= 65 && prn <= 96) return GnssType.GLONASS;
+  if (prn >= 1 && prn <= 36) return GnssType.Galileo; // 需要根据实际实现区分
+  if (prn >= 1 && prn <= 37) return GnssType.BeiDou;
+  if (prn >= 33 && prn <= 64) return GnssType.SBAS;
+  return GnssType.Other;
+}
+
+String getGnssName(int prn, GnssType type) {
+  switch (type) {
+    case GnssType.GPS:
+      return 'GPS';
+    case GnssType.GLONASS:
+      return 'GLONASS';
+    case GnssType.Galileo:
+      return 'Galileo';
+    case GnssType.BeiDou:
+      return 'BeiDou';
+    case GnssType.SBAS:
+      return 'SBAS';
+    case GnssType.Other:
+      return '其他';
+  }
 }
 
 class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
@@ -40,10 +82,17 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
   bool _isGpsEnabled = false;
   bool _hasPermission = false;
   Map<String, dynamic>? _locationData;
-  List<Map<String, dynamic>> _satellites = [];
-  int _usedSatellites = 0;
+  List<SatelliteInfo> _satellites = [];
   Timer? _refreshTimer;
   String _statusMessage = "正在检查...";
+
+  // 统计各系统卫星数量
+  int _gpsCount = 0;
+  int _glonassCount = 0;
+  int _galileoCount = 0;
+  int _beidouCount = 0;
+  int _otherCount = 0;
+  int _usedCount = 0;
 
   @override
   void initState() {
@@ -82,7 +131,6 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
   }
 
   Future<void> _startMonitoring() async {
-    // 请求位置更新
     try {
       await platform.invokeMethod('requestLocationUpdate');
     } catch (e) {
@@ -91,7 +139,6 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
     
     await _refreshGpsData();
     
-    // 每秒刷新一次
     _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _refreshGpsData();
     });
@@ -99,10 +146,7 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
 
   Future<void> _refreshGpsData() async {
     try {
-      // 直接检查GPS是否启用
       final bool isEnabled = await platform.invokeMethod('isGpsEnabled');
-      
-      // 获取GPS数据
       final gpsData = await platform.invokeMethod('getGpsStatus');
       
       if (!mounted) return;
@@ -111,17 +155,37 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
         _isGpsEnabled = isEnabled;
         
         if (gpsData != null) {
-          // 获取位置信息
           final location = gpsData['location'] as Map<dynamic, dynamic>?;
           if (location != null && location.isNotEmpty) {
             _locationData = Map<String, dynamic>.from(location);
           }
           
-          // 获取卫星列表
           final satellites = gpsData['satellites'] as List<dynamic>?;
-          if (satellites != null) {
-            _satellites = satellites.map((s) => Map<String, dynamic>.from(s as Map)).toList();
-            _usedSatellites = _satellites.where((s) => s['used'] == true).length;
+          if (satellites != null && satellites.isNotEmpty) {
+            _satellites = satellites.map((s) {
+              final prn = s['prn'] as int;
+              final type = getGnssType(prn);
+              return SatelliteInfo(
+                prn: prn,
+                snr: (s['snr'] ?? 0).toDouble(),
+                elevation: (s['elevation'] ?? 0).toDouble(),
+                azimuth: (s['azimuth'] ?? 0).toDouble(),
+                used: s['used'] ?? false,
+                type: type,
+                name: getGnssName(prn, type),
+              );
+            }).toList();
+            
+            // 统计
+            _gpsCount = _satellites.where((s) => s.type == GnssType.GPS).length;
+            _glonassCount = _satellites.where((s) => s.type == GnssType.GLONASS).length;
+            _galileoCount = _satellites.where((s) => s.type == GnssType.Galileo).length;
+            _beidouCount = _satellites.where((s) => s.type == GnssType.BeiDou).length;
+            _otherCount = _satellites.where((s) => 
+              s.type == GnssType.SBAS || s.type == GnssType.Other).length;
+            _usedCount = _satellites.where((s) => s.used).length;
+          } else {
+            _satellites = [];
           }
         }
       });
@@ -134,6 +198,17 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
     if (snr >= 40) return Colors.green;
     if (snr >= 25) return Colors.orange;
     return Colors.red;
+  }
+
+  Color _getGnssColor(GnssType type) {
+    switch (type) {
+      case GnssType.GPS: return Colors.blue;
+      case GnssType.GLONASS: return Colors.red;
+      case GnssType.Galileo: return Colors.purple;
+      case GnssType.BeiDou: return Colors.orange;
+      case GnssType.SBAS: return Colors.teal;
+      case GnssType.Other: return Colors.grey;
+    }
   }
 
   @override
@@ -161,7 +236,9 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
                   const SizedBox(height: 16),
                   _buildLocationCard(),
                   const SizedBox(height: 16),
-                  _buildSatelliteStatsCard(),
+                  _buildGnssStatsCard(),
+                  const SizedBox(height: 16),
+                  _buildTotalStatsCard(),
                   const SizedBox(height: 16),
                   _buildSatelliteList(),
                   const SizedBox(height: 80),
@@ -300,7 +377,72 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
     );
   }
 
-  Widget _buildSatelliteStatsCard() {
+  Widget _buildGnssStatsCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.satellite_alt, color: Colors.cyan),
+                const SizedBox(width: 8),
+                Text(
+                  '卫星系统统计',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+            const Divider(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildGnssChip('GPS', _gpsCount, Colors.blue),
+                _buildGnssChip('GLONASS', _glonassCount, Colors.red),
+                _buildGnssChip('BeiDou', _beidouCount, Colors.orange),
+                _buildGnssChip('Galileo', _galileoCount, Colors.purple),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGnssChip(String name, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            name,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              count.toString(),
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTotalStatsCard() {
     return Card(
       color: Colors.blue.shade900,
       child: Padding(
@@ -309,8 +451,8 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _buildStatItem('卫星总数', _satellites.length.toString(), Icons.satellite_alt),
-            _buildStatItem('已定位', _usedSatellites.toString(), Icons.check_circle),
-            _buildStatItem('未定位', (_satellites.length - _usedSatellites).toString(), Icons.cancel),
+            _buildStatItem('已定位', _usedCount.toString(), Icons.check_circle),
+            _buildStatItem('未定位', (_satellites.length - _usedCount).toString(), Icons.cancel),
           ],
         ),
       ),
@@ -355,8 +497,14 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
     }
 
     // 按信噪比排序
-    final sortedSatellites = List<Map<String, dynamic>>.from(_satellites)
-      ..sort((a, b) => ((b['snr'] ?? 0) as num).compareTo((a['snr'] ?? 0) as num));
+    final sortedSatellites = List<SatelliteInfo>.from(_satellites)
+      ..sort((a, b) => b.snr.compareTo(a.snr));
+
+    // 按系统分组
+    final grouped = <GnssType, List<SatelliteInfo>>{};
+    for (final sat in sortedSatellites) {
+      grouped.putIfAbsent(sat.type, () => []).add(sat);
+    }
 
     return Card(
       child: Padding(
@@ -375,48 +523,94 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
               ],
             ),
             const Divider(),
-            ...sortedSatellites.map((sat) => _buildSatelliteItem(sat)),
+            ...grouped.entries.map((entry) => _buildGnssSection(entry.key, entry.value)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSatelliteItem(Map<String, dynamic> sat) {
-    final snr = (sat['snr'] ?? 0).toDouble();
-    final used = sat['used'] ?? false;
+  Widget _buildGnssSection(GnssType type, List<SatelliteInfo> satellites) {
+    final color = _getGnssColor(type);
+    final name = getGnssName(satellites.first.prn, type);
+    final usedInFix = satellites.where((s) => s.used).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                name,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '($usedInFix/${satellites.length})',
+                style: TextStyle(color: color.withOpacity(0.7), fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        ...satellites.map((sat) => _buildSatelliteItem(sat, color)),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _buildSatelliteItem(SatelliteInfo sat, Color gnssColor) {
+    final used = sat.used;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: used 
-            ? Colors.green.withOpacity(0.1) 
-            : Colors.grey.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
+            ? gnssColor.withOpacity(0.1) 
+            : Colors.grey.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: used 
-              ? Colors.green.withOpacity(0.5) 
-              : Colors.grey.withOpacity(0.3),
+              ? gnssColor.withOpacity(0.3) 
+              : Colors.grey.withOpacity(0.2),
         ),
       ),
       child: Row(
         children: [
           // PRN编号
           Container(
-            width: 50,
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            width: 45,
+            padding: const EdgeInsets.symmetric(vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.3),
+              color: gnssColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              'PRN\n${sat['prn']}',
+              '${sat.prn}',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: 14, 
+                fontWeight: FontWeight.bold,
+                color: gnssColor,
+              ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           // 信号强度
           Expanded(
             child: Column(
@@ -424,48 +618,33 @@ class _GpsDiagnosticPageState extends State<GpsDiagnosticPage> {
               children: [
                 Row(
                   children: [
-                    const Text('信噪比: ', style: TextStyle(color: Colors.grey)),
                     Text(
-                      '${snr.toStringAsFixed(1)} dBHz',
+                      '${sat.snr.toStringAsFixed(1)} dBHz',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: _getSignalColor(snr),
+                        color: _getSignalColor(sat.snr),
+                        fontSize: 12,
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '方位 ${sat.azimuth.toStringAsFixed(0)}°',
+                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '仰角 ${sat.elevation.toStringAsFixed(0)}°',
+                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                    ),
                   ],
-                ),
-                const SizedBox(height: 4),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: (snr / 55).clamp(0.0, 1.0),
-                    backgroundColor: Colors.grey.withOpacity(0.3),
-                    valueColor: AlwaysStoppedAnimation(_getSignalColor(snr)),
-                    minHeight: 8,
-                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          // 方位角和仰角
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '方位 ${(sat['azimuth'] ?? 0).toStringAsFixed(0)}°',
-                style: const TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-              Text(
-                '仰角 ${(sat['elevation'] ?? 0).toStringAsFixed(0)}°',
-                style: const TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-            ],
-          ),
-          const SizedBox(width: 8),
           Icon(
             used ? Icons.check_circle : Icons.circle_outlined,
             color: used ? Colors.green : Colors.grey,
+            size: 18,
           ),
         ],
       ),
